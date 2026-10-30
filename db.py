@@ -333,11 +333,14 @@ def get_aircraft(airline_id: Optional[int] = None) -> List[Dict[str, Any]]:
 
 
 def get_flights(
-    origin: Optional[str] = None,
-    destination: Optional[str] = None,
+    search: Optional[str] = None,
     status: Optional[str] = None,
+    origin: Optional[str] = None,
+    dest: Optional[str] = None,
+    destination: Optional[str] = None,
     airline_id: Optional[int] = None,
-    date_val: Optional[str] = None
+    date_val: Optional[str] = None,
+    **kwargs
 ) -> List[Dict[str, Any]]:
     """Member 2 View 1: Retrieves flight dispatch board with multi-criteria filtering."""
     conn = get_connection()
@@ -345,18 +348,29 @@ def get_flights(
     try:
         conditions = []
         params = []
+        target_dest = dest or destination
+
+        if search:
+            search_param = f"%{search.strip().upper()}%"
+            conditions.append("(UPPER(f.flight_number) LIKE ? OR UPPER(f.aircraft_reg_no) LIKE ?)")
+            params.extend([search_param, search_param])
+
         if origin and origin != "ALL":
             conditions.append("f.origin_airport = ?")
             params.append(origin)
-        if destination and destination != "ALL":
+
+        if target_dest and target_dest != "ALL":
             conditions.append("f.dest_airport = ?")
-            params.append(destination)
+            params.append(target_dest)
+
         if status and status != "ALL":
             conditions.append("f.current_status = ?")
             params.append(status)
-        if airline_id:
+
+        if airline_id and airline_id != 0:
             conditions.append("f.airline_id = ?")
             params.append(airline_id)
+
         if date_val:
             conditions.append("f.flight_date = ?")
             params.append(date_val)
@@ -367,8 +381,8 @@ def get_flights(
                 f.flight_id, f.flight_number, f.flight_date,
                 al.airline_id, al.airline_name, al.callsign_prefix,
                 f.aircraft_reg_no, ac.model AS aircraft_model, ac.passenger_capacity,
-                f.origin_airport, orig.city AS origin_city,
-                f.dest_airport, dest.city AS dest_city,
+                f.origin_airport, orig.city AS origin_city, orig.airport_name AS origin_airport_name,
+                f.dest_airport, dest.city AS dest_city, dest.airport_name AS dest_airport_name,
                 f.scheduled_departure, f.scheduled_arrival,
                 f.actual_departure, f.actual_arrival,
                 f.current_status,
@@ -392,6 +406,15 @@ def get_flights(
         conn.close()
 
 
+def get_flight_by_id(flight_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a single flight record by its surrogate flight_id."""
+    flights = get_flights()
+    for f in flights:
+        if f["flight_id"] == flight_id:
+            return f
+    return None
+
+
 def add_flight(
     flight_number: str,
     flight_date_val: str,
@@ -400,19 +423,26 @@ def add_flight(
     origin_airport: str,
     dest_airport: str,
     scheduled_departure: str,
-    scheduled_arrival: str
+    scheduled_arrival: str,
+    current_status: str = "SCHEDULED",
+    **kwargs
 ) -> Tuple[bool, str]:
     """
     Schedules a new commercial flight leg.
     Enforces route rules (origin <> dest) and time order (arrival > departure).
     """
+    flight_number = flight_number.strip().upper()
+    origin_airport = origin_airport.strip().upper()
+    dest_airport = dest_airport.strip().upper()
+    aircraft_reg_no = aircraft_reg_no.strip().upper()
+
     if origin_airport == dest_airport:
-        return False, "Validation Error: Origin and Destination airports must be distinct."
+        return False, f"Constraint Violation: Origin airport ({origin_airport}) and Destination ({dest_airport}) cannot be the same aerodrome!"
 
     dep_dt = datetime.fromisoformat(scheduled_departure)
     arr_dt = datetime.fromisoformat(scheduled_arrival)
     if arr_dt <= dep_dt:
-        return False, "Validation Error: Scheduled arrival must be strictly after scheduled departure."
+        return False, "Constraint Violation: Scheduled arrival timestamp must be strictly after scheduled departure timestamp!"
 
     conn = get_connection()
     cur = conn.cursor()
@@ -422,9 +452,9 @@ def add_flight(
                 flight_number, flight_date, airline_id, aircraft_reg_no,
                 origin_airport, dest_airport, destination_airport,
                 scheduled_departure, scheduled_arrival, current_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            flight_number.strip().upper(),
+            flight_number,
             flight_date_val,
             airline_id,
             aircraft_reg_no,
@@ -432,16 +462,21 @@ def add_flight(
             dest_airport,
             dest_airport,
             scheduled_departure,
-            scheduled_arrival
+            scheduled_arrival,
+            current_status
         ))
         conn.commit()
         last_id = cur.lastrowid
-        return True, f"Flight {flight_number} scheduled successfully (ID #{last_id})."
+        return True, f"Flight {flight_number} successfully scheduled for {flight_date_val} ({origin_airport} -> {dest_airport})!"
     except Exception as e:
         conn.rollback()
         err_msg = str(e)
-        if "UNIQUE" in err_msg or "uq_flight_number_date" in err_msg:
-            return False, f"Duplicate Flight: Flight {flight_number} is already scheduled on {flight_date_val}."
+        if "UNIQUE" in err_msg.upper():
+            return False, f"Database Integrity Error: Flight {flight_number} is already scheduled on date {flight_date_val} (Unique constraint violation)!"
+        elif "CHECK" in err_msg.upper():
+            return False, f"Database Check Constraint Failed: {err_msg}"
+        elif "FOREIGN KEY" in err_msg.upper():
+            return False, f"Referential Integrity Error: Invalid foreign key reference (Airline, Aircraft or Airport)!"
         return False, f"Database Error: {err_msg}"
     finally:
         cur.close()
@@ -669,26 +704,27 @@ def get_excessive_delays(threshold_minutes: int = 30) -> List[Dict[str, Any]]:
 
 
 def get_fleet_capacity_report() -> List[Dict[str, Any]]:
-    """Member 2 View 2: Airline Fleet & Capacity Summary."""
-    q = """
-    SELECT 
-        al.airline_id,
-        al.airline_name,
-        al.callsign_prefix,
-        COUNT(ac.aircraft_reg_no) AS total_fleet_size,
-        COALESCE(SUM(ac.passenger_capacity), 0) AS total_seat_capacity,
-        ROUND(COALESCE(AVG(ac.passenger_capacity), 0), 1) AS avg_seat_capacity,
-        COALESCE(MAX(ac.max_altitude_ft), 0) AS max_service_ceiling_ft,
-        ROUND(COALESCE(AVG(ac.cruising_speed_knots), 0), 1) AS avg_cruising_speed_knots
-    FROM AIRLINE al
-    LEFT JOIN AIRCRAFT ac ON al.airline_id = ac.airline_id
-    GROUP BY al.airline_id, al.airline_name, al.callsign_prefix
-    ORDER BY total_seat_capacity DESC;
-    """
+    """Member 2 Query 4: Aircraft Fleet Utilization vs Industry Average (Scalar Subquery)."""
     conn = get_connection()
     cur = conn.cursor()
     try:
-        cur.execute(q)
+        sql = """
+            SELECT 
+                ac.aircraft_reg_no,
+                ac.model,
+                ac.manufacturer,
+                ac.passenger_capacity,
+                al.airline_name,
+                ROUND((ac.passenger_capacity - (SELECT AVG(passenger_capacity) FROM AIRCRAFT)), 1) AS seats_above_fleet_avg,
+                COUNT(f.flight_id) AS total_assigned_flights
+            FROM AIRCRAFT ac
+            JOIN AIRLINE al ON ac.airline_id = al.airline_id
+            LEFT JOIN FLIGHT f ON ac.aircraft_reg_no = f.aircraft_reg_no
+            WHERE ac.passenger_capacity > (SELECT AVG(passenger_capacity) FROM AIRCRAFT)
+            GROUP BY ac.aircraft_reg_no, ac.model, ac.manufacturer, ac.passenger_capacity, al.airline_name
+            ORDER BY ac.passenger_capacity DESC;
+        """
+        cur.execute(sql)
         return [dict(r) for r in cur.fetchall()]
     finally:
         cur.close()
@@ -702,11 +738,12 @@ def execute_raw_sql(sql_query: str) -> Tuple[bool, Any]:
     try:
         cur.execute(sql_query)
         if sql_query.strip().upper().startswith("SELECT"):
+            columns = [col[0] for col in cur.description]
             rows = cur.fetchall()
-            return True, [dict(r) for r in rows]
+            return True, {"columns": columns, "data": [dict(zip(columns, row)) for row in rows]}
         else:
             conn.commit()
-            return True, f"Command executed successfully (Rows affected: {cur.rowcount})."
+            return True, f"Statement executed successfully. Rows affected: {cur.rowcount}"
     except Exception as e:
         conn.rollback()
         return False, str(e)

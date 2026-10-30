@@ -114,3 +114,19 @@ Each entry follows the structured format:
     * *ATC Tower Console (`pages/3_ATC_Clearance_Console.py`):* Synchronized runway status reads and trigger collision feedback with plain-English safety warnings.
   - **Verification:** Created `verify_all_modules.py` validating 100% test passing across all 3 member domains, including both trigger safety interlocks and all complex queries.
 - **Traceability:** Complete fulfillment of `DBS_Project Instructions.pdf` (Sections 1–17) and `Air_Traffic_Control_DBMS_Project_Blueprint.md` (Sections 1–14).
+
+### Entry #8: Keyword Argument Bugfix & API Harmonization
+- **Timestamp:** 2026-10-30T19:25:00+05:30
+- **Task:** Bugfix & Cross-Module Argument Harmonization
+- **Files Modified:**
+  - `db.py`
+  - `test_member3.py`
+  - `CHANGES_LOG.md`
+  - `CHANGELOG.md`
+- **Change Details:**
+  - Fixed `TypeError: get_flights() got an unexpected keyword argument 'search'` by expanding `get_flights()` to support all query arguments (`search`, `status`, `origin`, `dest`, `destination`, `airline_id`, `date_val`, `**kwargs`).
+  - Added `current_status: str = "SCHEDULED"` parameter to `add_flight()` to align with `pages/2_Flight_Operations.py`.
+  - Added helper `get_flight_by_id(flight_id)` and updated `execute_raw_sql()` to return column dictionaries expected by Streamlit query visualizers.
+  - Aligned `get_fleet_capacity_report()` with Member 2's scalar subquery benchmark query (`WHERE ac.passenger_capacity > (SELECT AVG(passenger_capacity) FROM AIRCRAFT)`).
+  - Fixed `get_connection()` return signature handling in `test_member3.py`.
+  - Re-ran `verify_all_modules.py`, `verify_member2.py`, and `test_member3.py`: all suites pass with 100% success.

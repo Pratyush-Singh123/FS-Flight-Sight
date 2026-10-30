@@ -21,7 +21,8 @@ def run_tests():
     # 1. Initialize Database
     print("\n[Test 1] Initializing Database & Seed Data...")
     db.init_database()
-    conn, engine = db.get_connection()
+    conn = db.get_connection()
+    engine = "PostgreSQL" if db.is_postgres() else "SQLite"
     print(f"✅ Connected to: {engine.upper()}")
     conn.close()
 

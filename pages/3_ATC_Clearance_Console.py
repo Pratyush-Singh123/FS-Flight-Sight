@@ -13,9 +13,28 @@ st.set_page_config(
 # Initialize DB
 db.init_database()
 
+# Custom Styling
+st.markdown("""
+<style>
+    .atc-header {
+        background: linear-gradient(135deg, #064e3b 0%, #047857 100%);
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+    .atc-title { font-size: 1.8rem; font-weight: 700; margin: 0; color: #ffffff; }
+    .atc-subtitle { font-size: 0.95rem; color: #a7f3d0; margin-top: 0.25rem; }
+</style>
+""", unsafe_allow_html=True)
+
 # Header & Branding
-st.title("📡 Tower & En-Route ATC Clearance Console")
-st.caption("SkyFlow ATCMS – Module 3: Airspace Management, Real-Time Clearances & Safety Audit Log (Member 3)")
+st.markdown("""
+<div class="atc-header">
+    <div class="atc-title">📡 Tower Radar & En-Route ATC Clearance Console</div>
+    <div class="atc-subtitle">SkyFlow IOCC Module 3 (Member 3 Lead) • Airspace Management, Real-Time Clearances & Safety Incident Black-Box Ledger</div>
+</div>
+""", unsafe_allow_html=True)
 
 # Top Level KPI Metrics Bar
 flights_df = db.get_active_flights()
